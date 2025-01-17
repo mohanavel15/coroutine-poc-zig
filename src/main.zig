@@ -10,16 +10,16 @@ const CoroutineState = enum {
 };
 
 const Coroutine = struct {
-    rip: usize = 0,
-    rbp: usize = 0,
     rsp: usize = 0,
+    rbp: usize = 0,
+    rip: usize = 0,
     stack: [STACK_CAPACITY]u8 = undefined,
     state: CoroutineState = .New,
     cm: *CoroutineManager = undefined,
 
     const Self = @This();
 
-    fn init(self: *Self, cm: *CoroutineManager, func: *fn (*Coroutine) void) void {
+    fn Init(self: *Self, cm: *CoroutineManager, func: *fn (*Coroutine) void) void {
         self.rsp = @intFromPtr(&self.stack) + STACK_CAPACITY - 1;
         self.rip = @intFromPtr(func);
         self.cm = cm;
@@ -46,21 +46,22 @@ const Coroutine = struct {
         );
     }
 
-    pub fn Pause(self: *Self) void {
+    pub fn Pause(self: *Self) bool {
         if (self.state != .Running) {
-            return;
+            return false;
         }
 
         self.state = .Paused;
 
         // Why arbitary index into rbp?
-        // rbp = callee' rsp with previous rbp pushed
+        // rbp = callee's rsp with previous rbp pushed
         // simple saw the changes to stack
         // using binary ninja and calculated
         // the offsets.
+        // http://6.s081.scripts.mit.edu/sp18/x86-64-architecture-guide.html
         self.rsp = asm volatile (""
             : [ret] "={rbp}" (-> usize),
-        ) - 16;
+        ) + 16;
 
         self.rbp = asm volatile ("movq (%rbp), %rax"
             : [ret] "={rax}" (-> usize),
@@ -70,7 +71,7 @@ const Coroutine = struct {
             : [ret] "={rax}" (-> usize),
         );
 
-        self.cm.yeild();
+        return self.cm.yeild();
     }
 
     pub fn Resume(self: *Self) void {
@@ -91,7 +92,7 @@ const Coroutine = struct {
 
     pub fn Finish(self: *Self) void {
         self.state = .Terminated;
-        print(@constCast("Finished!\n"));
+        _ = self.cm.yeild();
     }
 };
 
@@ -102,6 +103,14 @@ const CoroutineManager = struct {
 
     const Self = @This();
 
+    fn Init(self: *Self) void {
+        self.len += 1;
+
+        var ctx: *Coroutine = &self.coros[0];
+        ctx.state = .Running;
+        ctx.cm = self;
+    }
+
     fn create(self: *Self, func: fn (*Coroutine) void) void {
         if (self.len >= 10) {
             @panic("OVERFLOW");
@@ -110,7 +119,7 @@ const CoroutineManager = struct {
         const idx = self.len;
         self.len += 1;
 
-        self.coros[idx].init(self, @constCast(&func));
+        self.coros[idx].Init(self, @constCast(&func));
     }
 
     fn next(self: *Self) usize {
@@ -122,31 +131,28 @@ const CoroutineManager = struct {
     }
 
     fn run(self: *Self) void {
-        const idx = self.curr;
-        switch (self.coros[idx].state) {
-            .Ready => {
-                self.coros[idx].Start();
-            },
-            .Paused => {
-                self.coros[idx].Resume();
-            },
-            else => {},
+        while (true) {
+            if (self.coros[0].Pause()) {
+                break;
+            }
         }
     }
 
-    fn yeild(self: *Self) void {
-        print(@constCast("yeild\n"));
+    fn yeild(self: *Self) bool {
         const idx = self.next();
-        switch (self.coros[idx].state) {
+        var ctx: *Coroutine = &self.coros[idx];
+
+        switch (ctx.state) {
             .Ready => {
-                self.coros[idx].Start();
+                ctx.Start();
             },
             .Paused => {
-                self.coros[idx].Resume();
+                ctx.Resume();
             },
             else => {},
         }
-        self.coros[idx].Resume();
+
+        return true;
     }
 };
 
@@ -168,7 +174,7 @@ fn counter(coro: *Coroutine) void {
     for (0..10) |i| {
         const v: [2]u8 = .{ @as(u8, @truncate(i + 48)), '\n' };
         print(@constCast(&v));
-        coro.Pause();
+        _ = coro.Pause();
     }
 }
 
@@ -180,7 +186,14 @@ pub fn main() void {
         .curr = 0,
     };
 
+    manager.Init();
+
     manager.create(counter);
     manager.create(counter);
-    manager.run();
+    // manager.run();
+    while (true) {
+        if (manager.coros[0].Pause()) {
+            break;
+        }
+    }
 }
