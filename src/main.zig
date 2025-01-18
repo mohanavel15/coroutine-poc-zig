@@ -36,13 +36,14 @@ const Coroutine = struct {
 
         asm volatile (
             \\ push %rsi
-            \\ jmp *%rax
+            \\ jmp *%r10
             :
             : [rsp] "{rsp}" (self.rsp),
               [rbp] "{rbp}" (self.rbp),
               [arg1] "{rdi}" (@intFromPtr(self)),
               [arg2] "{rsi}" (@intFromPtr(&Coroutine.Finish)),
-              [rip] "{rax}" (self.rip),
+              [rip] "{r10}" (self.rip),
+            : "r10", "rbp", "rax", "memory"
         );
     }
 
@@ -81,12 +82,13 @@ const Coroutine = struct {
 
         self.state = .Running;
 
-        asm volatile ("jmp *%rax"
+        asm volatile ("jmp *%r10"
             :
             : [rsp] "{rsp}" (self.rsp),
               [rbp] "{rbp}" (self.rbp),
               [arg1] "{rdi}" (@intFromPtr(self)),
-              [rip] "{rax}" (self.rip),
+              [rip] "{r10}" (self.rip),
+            : "r10", "rbp", "rax", "memory"
         );
     }
 
@@ -187,13 +189,7 @@ pub fn main() void {
     };
 
     manager.Init();
-
     manager.create(counter);
     manager.create(counter);
-    // manager.run();
-    while (true) {
-        if (manager.coros[0].Pause()) {
-            break;
-        }
-    }
+    manager.run();
 }

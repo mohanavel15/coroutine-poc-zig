@@ -1,7 +1,7 @@
 # Coroutine POC in Zing
 
 >[!CAUTION]
-> This isn't a library to be used somewhere. This is purely to get an understand of single threaded asynchronous programming.
+> This isn't a library to be used somewhere. This is purely to get an understanding of single threaded asynchronous programming.
 
 # Example
 
@@ -15,15 +15,9 @@ pub fn main() void {
     };
 
     manager.Init();
-
     manager.create(counter);
     manager.create(counter);
-    // manager.run(); buggy
-    while (true) {
-        if (manager.coros[0].Pause()) {
-            break;
-        }
-    }
+    manager.run();
 }
 ```
 ### Output
