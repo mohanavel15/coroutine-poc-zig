@@ -37,3 +37,7 @@ pub fn main() void {
 
 ... so on
 ```
+
+# Reference
+
+http://6.s081.scripts.mit.edu/sp18/x86-64-architecture-guide.html

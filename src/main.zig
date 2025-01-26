@@ -11,40 +11,21 @@ const CoroutineState = enum {
 
 const Coroutine = struct {
     rsp: usize = 0,
-    rbp: usize = 0,
-    rip: usize = 0,
-    stack: [STACK_CAPACITY]u8 = undefined,
+    stack: [STACK_CAPACITY / 8]usize = undefined,
     state: CoroutineState = .New,
     cm: *CoroutineManager = undefined,
 
     const Self = @This();
 
     fn Init(self: *Self, cm: *CoroutineManager, func: *fn (*Coroutine) void) void {
-        self.rsp = @intFromPtr(&self.stack) + STACK_CAPACITY - 1;
-        self.rip = @intFromPtr(func);
-        self.cm = cm;
         @memset(&self.stack, 0);
-        self.state = .Ready;
-    }
 
-    pub fn Start(self: *Self) void {
-        if (self.state != .Ready) {
-            return;
-        }
+        self.stack[self.stack.len - 1] = @intFromPtr(&Coroutine.Finish);
+        self.stack[self.stack.len - 2] = @intFromPtr(func);
+        self.rsp = @intFromPtr(&self.stack) + STACK_CAPACITY - (8 * 3);
 
-        self.state = .Running;
-
-        asm volatile (
-            \\ push %[lastfn]
-            \\ jmp *%[rip]
-            :
-            : [rsp] "{rsp}" (self.rsp),
-              [rbp] "{rbp}" (self.rbp),
-              [arg1] "{rdi}" (@intFromPtr(self)),
-              [lastfn] "r" (@intFromPtr(&Coroutine.Finish)),
-              [rip] "r" (self.rip),
-            : "r10", "rbp", "rsp", "memory"
-        );
+        self.cm = cm;
+        self.state = .Paused;
     }
 
     pub fn Pause(self: *Self) bool {
@@ -53,23 +34,8 @@ const Coroutine = struct {
         }
 
         self.state = .Paused;
-
-        // Why arbitary index into rbp?
-        // rbp = callee's rsp with previous rbp pushed
-        // simple saw the changes to stack
-        // using binary ninja and calculated
-        // the offsets.
-        // http://6.s081.scripts.mit.edu/sp18/x86-64-architecture-guide.html
         self.rsp = asm volatile (""
             : [ret] "={rbp}" (-> usize),
-        ) + 16;
-
-        self.rbp = asm volatile ("movq (%rbp), %[ret]"
-            : [ret] "=r" (-> usize),
-        );
-
-        self.rip = asm volatile ("movq 8(%rbp), %[ret]"
-            : [ret] "=r" (-> usize),
         );
 
         return self.cm.yeild();
@@ -82,17 +48,18 @@ const Coroutine = struct {
 
         self.state = .Running;
 
-        asm volatile ("jmp *%r10"
+        asm volatile (
+            \\ popq %rbp
+            \\ ret
             :
             : [rsp] "{rsp}" (self.rsp),
-              [rbp] "{rbp}" (self.rbp),
               [arg1] "{rdi}" (@intFromPtr(self)),
-              [rip] "{r10}" (self.rip),
-            : "r10", "rbp", "rax", "memory"
+            : "rbp", "rsp", "memory"
         );
     }
 
     pub fn Finish(self: *Self) void {
+        print("Finish\n");
         self.state = .Terminated;
         _ = self.cm.yeild();
     }
@@ -145,9 +112,6 @@ const CoroutineManager = struct {
         var ctx: *Coroutine = &self.coros[idx];
 
         switch (ctx.state) {
-            .Ready => {
-                ctx.Start();
-            },
             .Paused => {
                 ctx.Resume();
             },
@@ -158,7 +122,7 @@ const CoroutineManager = struct {
     }
 };
 
-fn print(arg: []u8) void {
+fn print(arg: []const u8) void {
     const SYS_WRITE: usize = 1;
     const STDOUT_FILENO: usize = 1;
 
@@ -175,7 +139,7 @@ fn print(arg: []u8) void {
 fn counter(coro: *Coroutine) void {
     for (0..10) |i| {
         const v: [2]u8 = .{ @as(u8, @truncate(i + 48)), '\n' };
-        print(@constCast(&v));
+        print(&v);
         _ = coro.Pause();
     }
 }
