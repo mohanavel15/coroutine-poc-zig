@@ -35,15 +35,15 @@ const Coroutine = struct {
         self.state = .Running;
 
         asm volatile (
-            \\ push %rsi
-            \\ jmp *%r10
+            \\ push %[lastfn]
+            \\ jmp *%[rip]
             :
             : [rsp] "{rsp}" (self.rsp),
               [rbp] "{rbp}" (self.rbp),
               [arg1] "{rdi}" (@intFromPtr(self)),
-              [arg2] "{rsi}" (@intFromPtr(&Coroutine.Finish)),
-              [rip] "{r10}" (self.rip),
-            : "r10", "rbp", "rax", "memory"
+              [lastfn] "r" (@intFromPtr(&Coroutine.Finish)),
+              [rip] "r" (self.rip),
+            : "r10", "rbp", "rsp", "memory"
         );
     }
 
@@ -64,12 +64,12 @@ const Coroutine = struct {
             : [ret] "={rbp}" (-> usize),
         ) + 16;
 
-        self.rbp = asm volatile ("movq (%rbp), %rax"
-            : [ret] "={rax}" (-> usize),
+        self.rbp = asm volatile ("movq (%rbp), %[ret]"
+            : [ret] "=r" (-> usize),
         );
 
-        self.rip = asm volatile ("movq 8(%rbp), %rax"
-            : [ret] "={rax}" (-> usize),
+        self.rip = asm volatile ("movq 8(%rbp), %[ret]"
+            : [ret] "=r" (-> usize),
         );
 
         return self.cm.yeild();
