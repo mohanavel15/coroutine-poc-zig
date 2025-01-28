@@ -1,101 +1,69 @@
 const COROUTINE_CAPACITY = 10;
 const STACK_CAPACITY = 1024;
 
-const Coroutine = struct {
+var coros: [10]Context = .{.{}} ** 10;
+var curr: usize = 0;
+var len: usize = 1;
+
+const Context = struct {
     rsp: usize = 0,
     stack: [STACK_CAPACITY / 8]usize = undefined,
-    cm: *CoroutineManager = undefined,
 
     const Self = @This();
 
-    fn Init(self: *Self, cm: *CoroutineManager, func: *fn (*Coroutine) void) void {
+    fn Init(self: *Self, func: *fn () void) void {
         @memset(&self.stack, 0);
 
-        self.stack[self.stack.len - 1] = @intFromPtr(&Coroutine.Finish);
+        self.stack[self.stack.len - 1] = @intFromPtr(&Context.deinit);
         self.stack[self.stack.len - 2] = @intFromPtr(func);
         self.rsp = @intFromPtr(&self.stack) + STACK_CAPACITY - (8 * 3);
-
-        self.cm = cm;
     }
 
-    pub fn Pause(self: *Self) void {
-        self.rsp = asm volatile (""
-            : [ret] "={rbp}" (-> usize),
-        );
-
-        self.cm.yeild();
-    }
-
-    pub fn Resume(self: *Self) void {
-        asm volatile (
-            \\ popq %rbp
-            \\ ret
-            :
-            : [rsp] "{rsp}" (self.rsp),
-              [arg1] "{rdi}" (@intFromPtr(self)),
-            : "rbp", "rsp", "memory"
-        );
-    }
-
-    pub fn Finish(self: *Self) void {
-        print("Finish #1.0\n");
-
-        for (self.cm.curr..self.cm.len - 1) |idx| {
-            const ctx = self.cm.coros[idx + 1];
-            self.cm.coros[idx] = ctx;
-        }
-        self.cm.len -= 1;
-
-        print("Finish #1.1\n");
-        _ = self.cm.yeild();
+    fn deinit() void {
+        print("TODO: deinit\n");
+        @panic("abort");
     }
 };
 
-const CoroutineManager = struct {
-    coros: []Coroutine,
-    len: usize,
-    curr: usize,
+fn create(func: fn () void) void {
+    const idx = len;
+    len += 1;
 
-    const Self = @This();
+    coros[idx].Init(@constCast(&func));
+}
 
-    fn Init(self: *Self) void {
-        self.len += 1;
-
-        var ctx: *Coroutine = &self.coros[0];
-        ctx.cm = self;
+fn next() usize {
+    curr += 1;
+    if (curr >= len) {
+        curr = 0;
     }
+    return curr;
+}
 
-    fn create(self: *Self, func: fn (*Coroutine) void) void {
-        if (self.len >= 10) {
-            @panic("OVERFLOW");
-        }
-
-        const idx = self.len;
-        self.len += 1;
-
-        self.coros[idx].Init(self, @constCast(&func));
+fn run() void {
+    while (len > 1) {
+        yeild();
     }
+}
 
-    fn next(self: *Self) usize {
-        self.curr += 1;
-        if (self.curr >= self.len) {
-            self.curr = 0;
-        }
-        return self.curr;
-    }
+fn yeild() void {
+    var ctx: *Context = &coros[curr];
 
-    fn run(self: *Self) void {
-        while (self.len > 1) {
-            self.coros[0].Pause();
-        }
-    }
+    ctx.rsp = asm volatile (""
+        : [ret] "={rbp}" (-> usize),
+    );
 
-    fn yeild(self: *Self) void {
-        const idx = self.next();
-        var ctx: *Coroutine = &self.coros[idx];
-        ctx.Resume();
-    }
-};
+    const idx = next();
+
+    ctx = &coros[idx];
+    asm volatile (
+        \\ popq %rbp
+        \\ ret
+        :
+        : [rsp] "{rsp}" (ctx.rsp),
+        : "rbp", "rsp", "memory"
+    );
+}
 
 fn print(arg: []const u8) void {
     const SYS_WRITE: usize = 1;
@@ -111,24 +79,16 @@ fn print(arg: []const u8) void {
     );
 }
 
-fn counter(coro: *Coroutine) void {
+fn counter() void {
     for (0..10) |i| {
         const v: [2]u8 = .{ @as(u8, @truncate(i + 48)), '\n' };
         print(&v);
-        _ = coro.Pause();
+        yeild();
     }
 }
 
 pub fn main() void {
-    var coros: [10]Coroutine = .{.{}} ** 10;
-    var manager = CoroutineManager{
-        .coros = &coros,
-        .len = 0,
-        .curr = 0,
-    };
-
-    manager.Init();
-    manager.create(counter);
-    manager.create(counter);
-    manager.run();
+    create(counter);
+    create(counter);
+    run();
 }
