@@ -1,18 +1,9 @@
 const COROUTINE_CAPACITY = 10;
 const STACK_CAPACITY = 1024;
 
-const CoroutineState = enum {
-    New,
-    Ready,
-    Running,
-    Paused,
-    Terminated,
-};
-
 const Coroutine = struct {
     rsp: usize = 0,
     stack: [STACK_CAPACITY / 8]usize = undefined,
-    state: CoroutineState = .New,
     cm: *CoroutineManager = undefined,
 
     const Self = @This();
@@ -25,29 +16,17 @@ const Coroutine = struct {
         self.rsp = @intFromPtr(&self.stack) + STACK_CAPACITY - (8 * 3);
 
         self.cm = cm;
-        self.state = .Paused;
     }
 
-    pub fn Pause(self: *Self) bool {
-        if (self.state != .Running) {
-            return false;
-        }
-
-        self.state = .Paused;
+    pub fn Pause(self: *Self) void {
         self.rsp = asm volatile (""
             : [ret] "={rbp}" (-> usize),
         );
 
-        return self.cm.yeild();
+        self.cm.yeild();
     }
 
     pub fn Resume(self: *Self) void {
-        if (self.state != .Paused) {
-            return;
-        }
-
-        self.state = .Running;
-
         asm volatile (
             \\ popq %rbp
             \\ ret
@@ -59,8 +38,15 @@ const Coroutine = struct {
     }
 
     pub fn Finish(self: *Self) void {
-        print("Finish\n");
-        self.state = .Terminated;
+        print("Finish #1.0\n");
+
+        for (self.cm.curr..self.cm.len - 1) |idx| {
+            const ctx = self.cm.coros[idx + 1];
+            self.cm.coros[idx] = ctx;
+        }
+        self.cm.len -= 1;
+
+        print("Finish #1.1\n");
         _ = self.cm.yeild();
     }
 };
@@ -76,7 +62,6 @@ const CoroutineManager = struct {
         self.len += 1;
 
         var ctx: *Coroutine = &self.coros[0];
-        ctx.state = .Running;
         ctx.cm = self;
     }
 
@@ -100,25 +85,15 @@ const CoroutineManager = struct {
     }
 
     fn run(self: *Self) void {
-        while (true) {
-            if (self.coros[0].Pause()) {
-                break;
-            }
+        while (self.len > 1) {
+            self.coros[0].Pause();
         }
     }
 
-    fn yeild(self: *Self) bool {
+    fn yeild(self: *Self) void {
         const idx = self.next();
         var ctx: *Coroutine = &self.coros[idx];
-
-        switch (ctx.state) {
-            .Paused => {
-                ctx.Resume();
-            },
-            else => {},
-        }
-
-        return true;
+        ctx.Resume();
     }
 };
 
