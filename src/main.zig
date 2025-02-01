@@ -1,9 +1,12 @@
+const std = @import("std");
+const ArrayList = std.ArrayList;
+const Allocator = std.mem.Allocator;
+
 const COROUTINE_CAPACITY = 10;
 const STACK_CAPACITY = 1024;
 
-var coros: [10]Context = .{.{}} ** 10;
+var coros: ArrayList(Context) = undefined;
 var curr: usize = 0;
-var len: usize = 1;
 
 const Context = struct {
     rsp: usize = 0,
@@ -22,16 +25,23 @@ const Context = struct {
     }
 };
 
-fn create(func: fn () void) void {
-    const idx = len;
-    len += 1;
+fn init(allocator: Allocator) !void {
+    coros = ArrayList(Context).init(allocator);
+    try coros.append(.{});
+}
 
-    coros[idx].init(@constCast(&func));
+fn deinit() void {
+    coros.deinit();
+}
+
+fn create(func: fn () void) !void {
+    try coros.append(.{});
+    coros.items[coros.items.len - 1].init(@constCast(&func));
 }
 
 fn next() usize {
     curr += 1;
-    if (curr >= len) {
+    if (curr >= coros.items.len) {
         curr = 0;
     }
     return curr;
@@ -44,17 +54,16 @@ fn run() void {
 }
 
 fn yeild() void {
-    var ctx: *Context = &coros[curr];
+    var ctx: *Context = &coros.items[curr];
 
     ctx.rsp = asm volatile (""
         : [ret] "={rbp}" (-> usize),
     );
 
     const idx = next();
-
-    ctx = &coros[idx];
+    ctx = &coros.items[idx];
     if (ctx.completed) {
-        ctx = &coros[0];
+        ctx = &coros.items[0];
     }
 
     asm volatile (
@@ -67,15 +76,15 @@ fn yeild() void {
 }
 
 fn finish() void {
-    var ctx: *Context = &coros[curr];
+    var ctx: *Context = &coros.items[curr];
     ctx.completed = true;
     yeild();
 }
 
 fn coroutine_count() usize {
     var count: usize = 0;
-    for (0..len) |i| {
-        if (!coros[i].completed) {
+    for (0..coros.items.len) |i| {
+        if (!coros.items[i].completed) {
             count += 1;
         }
     }
@@ -105,8 +114,17 @@ fn counter() void {
     }
 }
 
-pub fn main() void {
-    create(counter);
-    create(counter);
+pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer {
+        _ = gpa.deinit();
+    }
+
+    const allocator = gpa.allocator();
+
+    try init(allocator);
+    try create(counter);
+    try create(counter);
     run();
+    deinit();
 }
