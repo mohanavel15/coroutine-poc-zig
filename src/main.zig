@@ -8,20 +8,17 @@ var len: usize = 1;
 const Context = struct {
     rsp: usize = 0,
     stack: [STACK_CAPACITY / 8]usize = undefined,
+    completed: bool = true,
 
     const Self = @This();
 
-    fn Init(self: *Self, func: *fn () void) void {
+    fn init(self: *Self, func: *fn () void) void {
         @memset(&self.stack, 0);
 
-        self.stack[self.stack.len - 1] = @intFromPtr(&Context.deinit);
+        self.stack[self.stack.len - 1] = @intFromPtr(&finish);
         self.stack[self.stack.len - 2] = @intFromPtr(func);
         self.rsp = @intFromPtr(&self.stack) + STACK_CAPACITY - (8 * 3);
-    }
-
-    fn deinit() void {
-        print("TODO: deinit\n");
-        @panic("abort");
+        self.completed = false;
     }
 };
 
@@ -29,7 +26,7 @@ fn create(func: fn () void) void {
     const idx = len;
     len += 1;
 
-    coros[idx].Init(@constCast(&func));
+    coros[idx].init(@constCast(&func));
 }
 
 fn next() usize {
@@ -41,7 +38,7 @@ fn next() usize {
 }
 
 fn run() void {
-    while (len > 1) {
+    while (coroutine_count() > 0) {
         yeild();
     }
 }
@@ -56,13 +53,34 @@ fn yeild() void {
     const idx = next();
 
     ctx = &coros[idx];
+    if (ctx.completed) {
+        ctx = &coros[0];
+    }
+
     asm volatile (
-        \\ popq %rbp
+        \\ pop %rbp
         \\ ret
         :
         : [rsp] "{rsp}" (ctx.rsp),
         : "rbp", "rsp", "memory"
     );
+}
+
+fn finish() void {
+    var ctx: *Context = &coros[curr];
+    ctx.completed = true;
+    yeild();
+}
+
+fn coroutine_count() usize {
+    var count: usize = 0;
+    for (0..len) |i| {
+        if (!coros[i].completed) {
+            count += 1;
+        }
+    }
+
+    return count;
 }
 
 fn print(arg: []const u8) void {
