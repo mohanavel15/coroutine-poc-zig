@@ -1,4 +1,4 @@
-# Coroutine POC in Zing
+# Coroutine POC in Zig
 
 >[!CAUTION]
 > This is purely to get an understanding of single threaded asynchronous programming. This introduces Undefined behaviors in a lot cases.
