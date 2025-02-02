@@ -19,8 +19,8 @@ const Context = struct {
         @memset(&self.stack, 0);
 
         self.stack[self.stack.len - 1] = @intFromPtr(&finish);
-        self.stack[self.stack.len - 2] = @intFromPtr(func);
-        self.rsp = @intFromPtr(&self.stack) + STACK_CAPACITY - (8 * 3);
+        self.stack[self.stack.len - 7] = @intFromPtr(func);
+        self.rsp = @intFromPtr(&self.stack) + STACK_CAPACITY - (8 * 8);
         self.completed = false;
     }
 };
@@ -53,9 +53,20 @@ fn run() void {
     }
 }
 
-fn yeild() void {
-    var ctx: *Context = &coros.items[curr];
+inline fn yeild() void {
+    _ = asm volatile (
+        \\ push %r12
+        \\ push %r13
+        \\ push %r14
+        \\ push %r15
+        \\ push %rbx
+    );
 
+    restore();
+}
+
+fn restore() void {
+    var ctx: *Context = &coros.items[curr];
     ctx.rsp = asm volatile (""
         : [ret] "={rbp}" (-> usize),
     );
@@ -68,10 +79,16 @@ fn yeild() void {
 
     asm volatile (
         \\ pop %rbp
+        \\ pop %r10
+        \\ pop %rbx
+        \\ pop %r15
+        \\ pop %r14
+        \\ pop %r13
+        \\ pop %r12
+        \\ push %r10
         \\ ret
         :
         : [rsp] "{rsp}" (ctx.rsp),
-        : "rbp", "rsp", "memory"
     );
 }
 
