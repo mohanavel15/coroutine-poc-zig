@@ -2,7 +2,6 @@ const std = @import("std");
 const ArrayList = std.ArrayList;
 const Allocator = std.mem.Allocator;
 
-const COROUTINE_CAPACITY = 10;
 const STACK_CAPACITY = 1024;
 
 const alloc = std.heap.page_allocator;
@@ -106,17 +105,6 @@ fn finish() void {
     const ctx = coros.swapRemove(curr);
     garbage.append(ctx) catch unreachable;
     yeild_intern(true);
-}
-
-fn coroutine_count() usize {
-    var count: usize = 0;
-    for (0..coros.items.len) |i| {
-        if (!coros.items[i].completed) {
-            count += 1;
-        }
-    }
-
-    return count;
 }
 
 fn print(arg: []const u8) void {
