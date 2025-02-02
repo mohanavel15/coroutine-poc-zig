@@ -4,9 +4,9 @@ const Allocator = std.mem.Allocator;
 
 const STACK_CAPACITY = 1024;
 
-const alloc = std.heap.page_allocator;
-var coros: ArrayList(*Context) = ArrayList(*Context).init(alloc);
-var garbage: ArrayList(*Context) = ArrayList(*Context).init(alloc);
+var alloc: Allocator = undefined;
+var coros: ArrayList(*Context) = undefined;
+var garbage: ArrayList(*Context) = undefined;
 var curr: usize = 0;
 
 const Context = struct {
@@ -26,12 +26,19 @@ const Context = struct {
     }
 };
 
-pub fn init() void {
+pub fn init(allocator: Allocator) void {
+    alloc = allocator;
+    coros = ArrayList(*Context).init(alloc);
+    garbage = ArrayList(*Context).init(alloc);
+
     const ctx = alloc.create(Context) catch unreachable;
     coros.append(ctx) catch unreachable;
 }
 
 pub fn deinit() void {
+    const main_ctx = coros.pop();
+    alloc.destroy(main_ctx);
+    
     coros.deinit();
     garbage.deinit();
 }
