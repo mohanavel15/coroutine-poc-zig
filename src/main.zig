@@ -5,7 +5,9 @@ const Allocator = std.mem.Allocator;
 const COROUTINE_CAPACITY = 10;
 const STACK_CAPACITY = 1024;
 
-var coros: ArrayList(Context) = undefined;
+const alloc = std.heap.page_allocator;
+var coros: ArrayList(*Context) = ArrayList(*Context).init(alloc);
+var garbage: ArrayList(*Context) = ArrayList(*Context).init(alloc);
 var curr: usize = 0;
 
 const Context = struct {
@@ -25,18 +27,20 @@ const Context = struct {
     }
 };
 
-fn init(allocator: Allocator) !void {
-    coros = ArrayList(Context).init(allocator);
-    try coros.append(.{});
+fn init() void {
+    const ctx = alloc.create(Context) catch unreachable;
+    coros.append(ctx) catch unreachable;
 }
 
 fn deinit() void {
     coros.deinit();
+    garbage.deinit();
 }
 
-fn create(func: fn () void) !void {
-    try coros.append(.{});
-    coros.items[coros.items.len - 1].init(@constCast(&func));
+fn create(func: fn () void) void {
+    const ctx = alloc.create(Context) catch unreachable;
+    ctx.init(@constCast(&func));
+    coros.append(ctx) catch unreachable;
 }
 
 fn next() usize {
@@ -48,13 +52,17 @@ fn next() usize {
 }
 
 fn run() void {
-    while (coroutine_count() > 0) {
+    while (coros.items.len > 1) {
         yeild();
+        while (garbage.items.len > 0) {
+            const ctx = garbage.pop();
+            alloc.destroy(ctx);
+        }
     }
 }
 
 inline fn yeild() void {
-    _ = asm volatile (
+    asm volatile (
         \\ push %r12
         \\ push %r13
         \\ push %r14
@@ -62,19 +70,21 @@ inline fn yeild() void {
         \\ push %rbx
     );
 
-    restore();
+    yeild_intern(false);
 }
 
-fn restore() void {
-    var ctx: *Context = &coros.items[curr];
-    ctx.rsp = asm volatile (""
-        : [ret] "={rbp}" (-> usize),
-    );
+fn yeild_intern(only_restore: bool) void {
+    if (!only_restore) {
+        var ctx: *Context = coros.items[curr];
+        ctx.rsp = asm volatile (""
+            : [ret] "={rbp}" (-> usize),
+        );
+    }
 
     const idx = next();
-    ctx = &coros.items[idx];
+    var ctx = coros.items[idx];
     if (ctx.completed) {
-        ctx = &coros.items[0];
+        ctx = coros.items[0];
     }
 
     asm volatile (
@@ -93,9 +103,9 @@ fn restore() void {
 }
 
 fn finish() void {
-    var ctx: *Context = &coros.items[curr];
-    ctx.completed = true;
-    yeild();
+    const ctx = coros.swapRemove(curr);
+    garbage.append(ctx) catch unreachable;
+    yeild_intern(true);
 }
 
 fn coroutine_count() usize {
@@ -123,8 +133,8 @@ fn print(arg: []const u8) void {
     );
 }
 
-fn counter() void {
-    for (0..10) |i| {
+fn counter(len: usize) void {
+    for (0..len) |i| {
         const v: [2]u8 = .{ @as(u8, @truncate(i + 48)), '\n' };
         print(&v);
         yeild();
@@ -132,16 +142,23 @@ fn counter() void {
 }
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer {
-        _ = gpa.deinit();
-    }
+    init();
+    defer deinit();
 
-    const allocator = gpa.allocator();
-
-    try init(allocator);
-    try create(counter);
-    try create(counter);
+    create(struct {
+        fn f() void {
+            counter(10);
+        }
+    }.f);
+    create(struct {
+        fn f() void {
+            counter(6);
+        }
+    }.f);
+    create(struct {
+        fn f() void {
+            counter(12);
+        }
+    }.f);
     run();
-    deinit();
 }
