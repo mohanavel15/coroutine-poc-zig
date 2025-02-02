@@ -26,17 +26,17 @@ const Context = struct {
     }
 };
 
-fn init() void {
+pub fn init() void {
     const ctx = alloc.create(Context) catch unreachable;
     coros.append(ctx) catch unreachable;
 }
 
-fn deinit() void {
+pub fn deinit() void {
     coros.deinit();
     garbage.deinit();
 }
 
-fn create(func: fn () void) void {
+pub fn create(func: fn () void) void {
     const ctx = alloc.create(Context) catch unreachable;
     ctx.init(@constCast(&func));
     coros.append(ctx) catch unreachable;
@@ -50,7 +50,7 @@ fn next() usize {
     return curr;
 }
 
-fn run() void {
+pub fn run() void {
     while (coros.items.len > 1) {
         yeild();
         while (garbage.items.len > 0) {
@@ -60,7 +60,7 @@ fn run() void {
     }
 }
 
-inline fn yeild() void {
+pub inline fn yeild() void {
     asm volatile (
         \\ push %r12
         \\ push %r13
@@ -105,48 +105,4 @@ fn finish() void {
     const ctx = coros.swapRemove(curr);
     garbage.append(ctx) catch unreachable;
     yeild_intern(true);
-}
-
-fn print(arg: []const u8) void {
-    const SYS_WRITE: usize = 1;
-    const STDOUT_FILENO: usize = 1;
-
-    _ = asm volatile ("syscall"
-        : [ret] "={rax}" (-> usize),
-        : [SYS_WRITE] "{rax}" (SYS_WRITE),
-          [STDOUT_FILENO] "{rdi}" (STDOUT_FILENO),
-          [data] "{rsi}" (arg.ptr),
-          [len] "{rdx}" (arg.len),
-        : "rcx", "r11"
-    );
-}
-
-fn counter(len: usize) void {
-    for (0..len) |i| {
-        const v: [2]u8 = .{ @as(u8, @truncate(i + 48)), '\n' };
-        print(&v);
-        yeild();
-    }
-}
-
-pub fn main() !void {
-    init();
-    defer deinit();
-
-    create(struct {
-        fn f() void {
-            counter(10);
-        }
-    }.f);
-    create(struct {
-        fn f() void {
-            counter(6);
-        }
-    }.f);
-    create(struct {
-        fn f() void {
-            counter(12);
-        }
-    }.f);
-    run();
 }
