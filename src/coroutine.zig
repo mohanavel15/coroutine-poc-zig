@@ -16,12 +16,12 @@ const Context = struct {
     const Self = @This();
 
     fn init(self: *Self, func: *fn () void) void {
-        self.stack = alloc.alignedAlloc(usize, 16, STACK_CAPACITY / 8) catch unreachable;
+        self.stack = alloc.alignedAlloc(usize, 16, STACK_CAPACITY / @sizeOf(usize)) catch unreachable;
         @memset(self.stack, 0);
 
         self.stack[self.stack.len - 1] = @intFromPtr(&finish);
         self.stack[self.stack.len - 7] = @intFromPtr(func);
-        self.rsp = @intFromPtr(self.stack.ptr) + STACK_CAPACITY - (8 * 8);
+        self.rsp = @intFromPtr(self.stack.ptr) + STACK_CAPACITY - (8 * @sizeOf(usize));
     }
 };
 
