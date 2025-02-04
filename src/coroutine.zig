@@ -2,7 +2,7 @@ const std = @import("std");
 const ArrayList = std.ArrayList;
 const Allocator = std.mem.Allocator;
 
-const STACK_CAPACITY = 1024;
+const STACK_CAPACITY = 1024 * 4;
 
 var alloc: Allocator = undefined;
 var coros: ArrayList(*Context) = undefined;
@@ -11,25 +11,24 @@ var curr: usize = 0;
 
 const Context = struct {
     rsp: usize = 0,
-    stack: [STACK_CAPACITY / 8]usize = undefined,
-    completed: bool = true,
+    stack: []align(16) usize = undefined,
 
     const Self = @This();
 
     fn init(self: *Self, func: *fn () void) void {
-        @memset(&self.stack, 0);
+        self.stack = alloc.alignedAlloc(usize, 16, STACK_CAPACITY / 8) catch unreachable;
+        @memset(self.stack, 0);
 
         self.stack[self.stack.len - 1] = @intFromPtr(&finish);
         self.stack[self.stack.len - 7] = @intFromPtr(func);
-        self.rsp = @intFromPtr(&self.stack) + STACK_CAPACITY - (8 * 8);
-        self.completed = false;
+        self.rsp = @intFromPtr(self.stack.ptr) + STACK_CAPACITY - (8 * 8);
     }
 };
 
 pub fn init(allocator: Allocator) void {
     alloc = allocator;
     coros = ArrayList(*Context).init(alloc);
-    garbage = ArrayList(*Context).init(alloc);
+    garbage = ArrayList(*Context).initCapacity(alloc, 10) catch unreachable;
 
     const ctx = alloc.create(Context) catch unreachable;
     coros.append(ctx) catch unreachable;
@@ -38,7 +37,6 @@ pub fn init(allocator: Allocator) void {
 pub fn deinit() void {
     const main_ctx = coros.pop();
     alloc.destroy(main_ctx);
-    
     coros.deinit();
     garbage.deinit();
 }
@@ -49,12 +47,9 @@ pub fn create(func: fn () void) void {
     coros.append(ctx) catch unreachable;
 }
 
-fn next() usize {
+fn next() void {
     curr += 1;
-    if (curr >= coros.items.len) {
-        curr = 0;
-    }
-    return curr;
+    curr %= coros.items.len;
 }
 
 pub fn run() void {
@@ -62,6 +57,7 @@ pub fn run() void {
         yeild();
         while (garbage.items.len > 0) {
             const ctx = garbage.pop();
+            alloc.free(ctx.stack);
             alloc.destroy(ctx);
         }
     }
@@ -85,13 +81,11 @@ fn yeild_intern(only_restore: bool) void {
         ctx.rsp = asm volatile (""
             : [ret] "={rbp}" (-> usize),
         );
+
+        next();
     }
 
-    const idx = next();
-    var ctx = coros.items[idx];
-    if (ctx.completed) {
-        ctx = coros.items[0];
-    }
+    const ctx = coros.items[curr];
 
     asm volatile (
         \\ pop %rbp
@@ -109,7 +103,8 @@ fn yeild_intern(only_restore: bool) void {
 }
 
 fn finish() void {
-    const ctx = coros.swapRemove(curr);
+    const ctx = coros.orderedRemove(curr);
     garbage.append(ctx) catch unreachable;
+    curr %= coros.items.len;
     yeild_intern(true);
 }
