@@ -3,6 +3,7 @@ const ArrayList = std.ArrayList;
 const Allocator = std.mem.Allocator;
 
 const STACK_CAPACITY = 1024 * 4;
+const STACK_ALIGNMENT = 16;
 
 var alloc: Allocator = undefined;
 var coros: ArrayList(*Context) = undefined;
@@ -16,7 +17,7 @@ const Context = struct {
     const Self = @This();
 
     fn init(self: *Self, func: *fn () void) void {
-        self.stack = alloc.alignedAlloc(usize, 16, STACK_CAPACITY / @sizeOf(usize)) catch unreachable;
+        self.stack = alloc.alignedAlloc(usize, STACK_ALIGNMENT, STACK_CAPACITY / @sizeOf(usize)) catch unreachable;
         @memset(self.stack, 0);
 
         self.stack[self.stack.len - 1] = @intFromPtr(&finish);
@@ -35,8 +36,12 @@ pub fn init(allocator: Allocator) void {
 }
 
 pub fn deinit() void {
-    const main_ctx = coros.pop();
+    const main_ctx = coros.orderedRemove(0);
     alloc.destroy(main_ctx);
+
+    cleanList(&coros);
+    cleanList(&garbage);
+
     coros.deinit();
     garbage.deinit();
 }
@@ -47,6 +52,14 @@ pub fn create(func: fn () void) void {
     coros.append(ctx) catch unreachable;
 }
 
+pub fn cleanList(array: *ArrayList(*Context)) void {
+    while (array.items.len > 0) {
+        const ctx = array.pop();
+        alloc.free(ctx.stack);
+        alloc.destroy(ctx);
+    }
+}
+
 fn next() void {
     curr += 1;
     curr %= coros.items.len;
@@ -55,11 +68,7 @@ fn next() void {
 pub fn run() void {
     while (coros.items.len > 1) {
         yeild();
-        while (garbage.items.len > 0) {
-            const ctx = garbage.pop();
-            alloc.free(ctx.stack);
-            alloc.destroy(ctx);
-        }
+        cleanList(&garbage);
     }
 }
 
